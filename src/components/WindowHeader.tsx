@@ -20,7 +20,7 @@ export default function WindowHeader({ title = 'Axiom Overlay' }: { title?: stri
             color: '#f8fafc',
             fontSize: '0.8rem',
             position: 'relative'
-        }}>
+        } as any}>
             {/* Logo & Title */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <img src="/axiom-logo.png" alt="Axiom Logo" style={{ width: '18px', height: '18px', borderRadius: '4px' }} />
@@ -28,7 +28,7 @@ export default function WindowHeader({ title = 'Axiom Overlay' }: { title?: stri
             </div>
 
             {/* Controls & Shortcuts Badge */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', WebkitAppRegion: 'no-drag' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', WebkitAppRegion: 'no-drag' } as any}>
                 <button
                     onClick={() => setShowShortcuts(!showShortcuts)}
                     title="View Keyboard Shortcuts"
@@ -115,7 +115,7 @@ export default function WindowHeader({ title = 'Axiom Overlay' }: { title?: stri
                     color: '#f8fafc',
                     fontSize: '0.75rem',
                     WebkitAppRegion: 'no-drag'
-                }}>
+                } as any}>
                     <div style={{ fontWeight: 700, marginBottom: '8px', color: '#6366f1', display: 'flex', justifyContent: 'space-between' }}>
                         <span>Keyboard Shortcuts</span>
                         <span style={{ cursor: 'pointer', color: '#94a3b8' }} onClick={() => setShowShortcuts(false)}>✕</span>

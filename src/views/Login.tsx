@@ -19,7 +19,8 @@ export default function Login() {
     async function handleGoogleLogin() {
         setError('');
         try {
-            const redirectUrl = 'https://axiomtranscriber.vercel.app/auth/desktop-callback';
+            const apiBase = import.meta.env.VITE_API_BASE_URL || 'https://axiomtranscriber.vercel.app';
+            const redirectUrl = `${apiBase}/auth/desktop-callback`;
             const { data, error: err } = await supabase.auth.signInWithOAuth({
                 provider: 'google',
                 options: {
