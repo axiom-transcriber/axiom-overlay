@@ -70,12 +70,13 @@ app.on('open-url', (event, url) => {
 });
 
 function createWindow() {
+    const isWindows = process.platform === 'win32';
     win = new BrowserWindow({
         width: 420,
         height: 640,
         frame: false,
-        transparent: true,
-        backgroundColor: '#00000000',
+        transparent: !isWindows,
+        backgroundColor: isWindows ? '#0c0c0e' : '#00000000',
         hasShadow: false,
         alwaysOnTop: true,
         resizable: false,
@@ -87,9 +88,11 @@ function createWindow() {
         },
     });
 
-    // ── Hidden from screen capture (macOS) ──────────────────────────────────────
-    // setContentProtection(true) makes the window invisible to screen recording
-    // tools and screen sharing — the OS-level protection, not just visual hiding.
+    // ── Hidden from screen capture (Windows & macOS) ────────────────────────────
+    // On Windows, transparent windows (WS_EX_LAYERED) cause DWM to fail exclusion
+    // and fall back to WDA_MONITOR (solid black rectangle). Using a non-layered window
+    // with opacity 1.0 allows DWM to cleanly apply WDA_EXCLUDEFROMCAPTURE (0x11).
+    win.setOpacity(1.0);
     win.setContentProtection(true);
 
     // Visible on all workspaces including fullscreen apps

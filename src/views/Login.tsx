@@ -5,10 +5,14 @@ export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
+    const [googleLoading, setGoogleLoading] = useState(false);
     const [error, setError] = useState('');
+
+    const isProcessing = loading || googleLoading;
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (isProcessing) return;
         setLoading(true);
         setError('');
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
@@ -17,7 +21,9 @@ export default function Login() {
     }
 
     async function handleGoogleLogin() {
+        if (isProcessing) return;
         setError('');
+        setGoogleLoading(true);
         try {
             const apiBase = import.meta.env.VITE_API_BASE_URL || 'https://axiomtranscriber.vercel.app';
             const redirectUrl = `${apiBase}/auth/desktop-callback`;
@@ -31,6 +37,7 @@ export default function Login() {
 
             if (err) {
                 setError(err.message);
+                setGoogleLoading(false);
                 return;
             }
 
@@ -43,13 +50,17 @@ export default function Login() {
             }
         } catch (e: any) {
             setError(e?.message || 'Google sign-in failed');
+        } finally {
+            setTimeout(() => {
+                setGoogleLoading(false);
+            }, 3000);
         }
     }
 
     return (
         <div className="login">
             <div className="login-header">
-                <img src="/axiom-logo.png" alt="Axiom Logo" style={{ width: '48px', height: '48px', borderRadius: '10px', marginBottom: '10px' }} />
+                <img src="./axiom-logo.png" alt="Axiom Logo" style={{ width: '48px', height: '48px', borderRadius: '10px', marginBottom: '10px' }} />
                 <h1>Axiom Overlay</h1>
                 <p>Sign in to your account</p>
             </div>
@@ -59,6 +70,7 @@ export default function Login() {
                     placeholder="Email"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
+                    disabled={isProcessing}
                     required
                     autoFocus
                 />
@@ -67,10 +79,11 @@ export default function Login() {
                     placeholder="Password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
+                    disabled={isProcessing}
                     required
                 />
                 {error && <div className="error-msg">{error}</div>}
-                <button type="submit" disabled={loading}>
+                <button type="submit" disabled={isProcessing} style={{ opacity: isProcessing ? 0.65 : 1, cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
                     {loading ? 'Signing in…' : 'Sign In'}
                 </button>
 
@@ -81,6 +94,7 @@ export default function Login() {
                 <button
                     type="button"
                     onClick={handleGoogleLogin}
+                    disabled={isProcessing}
                     style={{
                         background: '#ffffff',
                         color: '#0f172a',
@@ -90,10 +104,12 @@ export default function Login() {
                         gap: '8px',
                         fontWeight: 600,
                         border: '1px solid #cbd5e1',
-                        cursor: 'pointer',
+                        cursor: isProcessing ? 'not-allowed' : 'pointer',
+                        opacity: isProcessing ? 0.65 : 1,
                         padding: '10px',
                         borderRadius: '8px',
                         width: '100%',
+                        transition: 'opacity 0.15s',
                     }}
                 >
                     <svg width="18" height="18" viewBox="0 0 24 24">
@@ -102,7 +118,7 @@ export default function Login() {
                         <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z"/>
                         <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
                     </svg>
-                    <span>Sign in with Google</span>
+                    <span>{googleLoading ? 'Connecting to Google…' : 'Sign in with Google'}</span>
                 </button>
             </form>
         </div>

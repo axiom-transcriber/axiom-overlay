@@ -23,7 +23,7 @@ export default function WindowHeader({ title = 'Axiom Overlay' }: { title?: stri
         } as any}>
             {/* Logo & Title */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <img src="/axiom-logo.png" alt="Axiom Logo" style={{ width: '18px', height: '18px', borderRadius: '4px' }} />
+                <img src="./axiom-logo.png" alt="Axiom Logo" style={{ width: '18px', height: '18px', borderRadius: '4px' }} />
                 <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#f8fafc', letterSpacing: '-0.01em' }}>{title}</span>
             </div>
 

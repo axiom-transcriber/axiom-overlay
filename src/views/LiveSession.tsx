@@ -24,14 +24,12 @@ interface Props {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-// Duration of each audio chunk (how long each recorder runs)
-const RECORD_DURATION_MS = 6000;
-// Interval between starting new chunks (creates a 50% overlap)
-const RECORD_INTERVAL_MS = 3000;
+// Duration of each sequential audio recording chunk (ms)
+const RECORD_CHUNK_MS = 3500;
 // Max recent transcript text to send as context with each suggest call
 const RECENT_CONTEXT_CHARS = 1200;
 // Min transcript chars in a chunk before triggering a suggest call
-const MIN_CHUNK_FOR_SUGGEST = 30;
+const MIN_CHUNK_FOR_SUGGEST = 15;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,29 +38,22 @@ function buildRecentContext(entries: TranscriptEntry[]): string {
     return all.length > RECENT_CONTEXT_CHARS ? all.slice(-RECENT_CONTEXT_CHARS) : all;
 }
 
-// Deduplicate overlapping words from adjacent Whisper chunks
-function mergeTranscripts(existingText: string, incomingText: string): string {
-    if (!existingText) return incomingText;
-    
-    const existingWords = existingText.trim().split(/\s+/);
-    const incomingWords = incomingText.trim().split(/\s+/);
-    
-    const maxOverlap = Math.min(20, existingWords.length, incomingWords.length);
-    let bestOverlap = 0;
-    
-    for (let overlap = 1; overlap <= maxOverlap; overlap++) {
-        const tail = existingWords.slice(-overlap).join(' ').replace(/[^\w\s]/g, '').toLowerCase();
-        const head = incomingWords.slice(0, overlap).join(' ').replace(/[^\w\s]/g, '').toLowerCase();
-        
-        if (tail === head) {
-            bestOverlap = overlap;
-        }
-    }
-    
-    if (bestOverlap > 0) {
-        return existingWords.join(' ') + ' ' + incomingWords.slice(bestOverlap).join(' ');
-    }
-    return existingText + ' ' + incomingText;
+// Strip silence hallucinations and foreign script transliterations
+function cleanWhisperArtifacts(text: string): string {
+    const trimmed = text.trim();
+    if (!trimmed) return '';
+    const lower = trimmed.toLowerCase().replace(/[^\w\s]/g, '');
+    const hallucinations = [
+        'thank you', 'thanks for watching', 'thank you for watching',
+        'obrigado', 'subtitles by', 'bye', 'you', 'thank you very much',
+        'thank you bye'
+    ];
+    if (hallucinations.includes(lower)) return '';
+    // Discard chunks with zero Latin characters (e.g. Hindi/Urdu/Arabic hallucinations from background hiss)
+    const latinCount = (trimmed.match(/[a-zA-Z]/g) || []).length;
+    if (latinCount === 0 && trimmed.length > 3) return '';
+    // Eliminate repeated words like "word word word"
+    return trimmed.replace(/\b(\w+)(?:\s+\1\b){2,}/gi, '$1');
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -96,6 +87,9 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
     const suggestActiveRef = useRef(false);
     const transcriptBottomRef = useRef<HTMLDivElement>(null);
 
+    const currentReaderRef = useRef<ReadableStreamDefaultReader<string> | null>(null);
+    const suggestTimeoutRef = useRef<any>(null);
+
     const groqRef = useRef<Groq>(new Groq({
         apiKey: import.meta.env.VITE_GROQ_API_KEY as string,
         dangerouslyAllowBrowser: true,
@@ -112,26 +106,23 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
 
     // ── Transcribe a blob chunk via Groq Whisper ──────────────────────────────
     const transcribeChunk = useCallback(async (blob: Blob) => {
-        if (blob.size < 1000) return; // skip near-empty chunks
+        if (blob.size < 1200) return; // skip near-empty buffers
         try {
             const file = new File([blob], 'chunk.webm', { type: blob.type });
             const result = await groqRef.current.audio.transcriptions.create({
                 file,
                 model: 'whisper-large-v3-turbo',
                 response_format: 'text',
+                language: 'en',
+                temperature: 0,
+                prompt: 'Software engineering interview and meeting discussion in English.',
             });
-            const text = (result as unknown as string).trim();
+            const raw = (result as unknown as string).trim();
+            const text = cleanWhisperArtifacts(raw);
             if (!text) return;
 
             const entry: TranscriptEntry = { id: entryIdRef.current++, text, ts: Date.now() };
-            setTranscript(prev => {
-                if (prev.length === 0) return [entry];
-                // Instead of appending a new entry every time, we merge into the last entry to keep the transcript clean
-                const last = prev[prev.length - 1];
-                const mergedText = mergeTranscripts(last.text, text);
-                const updatedLast = { ...last, text: mergedText };
-                return [...prev.slice(0, -1), updatedLast];
-            });
+            setTranscript(prev => [...prev, entry]);
             return text;
         } catch (err) {
             console.error('Transcription error', err);
@@ -141,15 +132,21 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
     // ── Stream suggestions for a transcript chunk ─────────────────────────────
     const fetchSuggestion = useCallback(async (chunkText: string) => {
         const sid = sessionIdRef.current;
-        if (!sid || suggestActiveRef.current) return;
-        suggestActiveRef.current = true;
+        if (!sid) return;
+
+        // Abort previous in-flight suggestion if fresh speech arrived
+        if (currentReaderRef.current) {
+            try { await currentReaderRef.current.cancel(); } catch {}
+            currentReaderRef.current = null;
+        }
 
         const recentContext = buildRecentContext(transcriptRef.current.slice(-20));
         const id = suggestionIdRef.current++;
-        setSuggestions(prev => [...prev.slice(-4), { id, text: '', done: false }]);
+        setSuggestions(prev => [...prev.slice(-3), { id, text: '', done: false }]);
 
         try {
             const reader = await openSuggestStream(sid, chunkText, recentContext, authTokenRef.current);
+            currentReaderRef.current = reader;
             let accumulated = '';
             while (true) {
                 const { value, done } = await reader.read();
@@ -176,22 +173,28 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
             setSuggestions(prev =>
                 prev.map(s => s.id === id ? { ...s, done: true } : s)
             );
-        } catch (err) {
-            console.error('Suggest stream error', err);
-            setSuggestions(prev => prev.filter(s => s.id !== id));
+        } catch (err: any) {
+            if (err?.name !== 'AbortError') {
+                console.error('Suggest stream error', err);
+            }
         } finally {
-            suggestActiveRef.current = false;
+            if (currentReaderRef.current) {
+                currentReaderRef.current = null;
+            }
         }
     }, []);
 
     const isRecordingRef = useRef(false);
     const recordersRef = useRef<Set<MediaRecorder>>(new Set());
-    const intervalRef = useRef<any>(null);
 
     const streamRef = useRef<MediaStream | null>(null);
 
     const cleanupAudio = useCallback(() => {
-        if (intervalRef.current) clearInterval(intervalRef.current);
+        if (suggestTimeoutRef.current) clearTimeout(suggestTimeoutRef.current);
+        if (currentReaderRef.current) {
+            try { currentReaderRef.current.cancel(); } catch {}
+            currentReaderRef.current = null;
+        }
         recordersRef.current.forEach(r => {
             if (r.state !== 'inactive') r.stop();
         });
@@ -249,10 +252,17 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
                 }
             }
 
-            // 2. Capture microphone if mode is 'both' or system capture failed
+            // 2. Capture microphone with noise suppression and echo cancellation
             if (mode === 'both' || !systemStream) {
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                    micStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                        },
+                        video: false,
+                    });
                 } catch (err) {
                     console.error('Microphone capture failed', err);
                 }
@@ -294,7 +304,7 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
 
         isRecordingRef.current = true;
 
-        const startChunk = () => {
+        const recordCycle = () => {
             if (!isRecordingRef.current) return;
             
             const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
@@ -327,7 +337,8 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
                     sum += dataArray[i];
                 }
                 const average = sum / dataArray.length;
-                if (average > 1.5) {
+                // Voice activity: background mic hiss is < 5; true speech is >= 12
+                if (average >= 12) {
                     hasSpeech = true;
                 }
                 if ((recorder.state as string) !== 'inactive') {
@@ -350,31 +361,39 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
                 if (audioContext) {
                     try { audioContext.close(); } catch {}
                 }
+
+                // Immediately start the next non-overlapping chunk
+                if (isRecordingRef.current) {
+                    recordCycle();
+                }
+
+                // Skip silence and ambient hum
                 if (!hasSpeech) {
                     return;
                 }
+
                 if (cycleChunks.length > 0) {
                     const blob = new Blob(cycleChunks, { type: 'audio/webm;codecs=opus' });
                     const text = await transcribeChunk(blob);
                     if (text && text.length >= MIN_CHUNK_FOR_SUGGEST) {
-                        fetchSuggestion(text);
+                        if (suggestTimeoutRef.current) clearTimeout(suggestTimeoutRef.current);
+                        suggestTimeoutRef.current = setTimeout(() => {
+                            fetchSuggestion(text);
+                        }, 800);
                     }
                 }
             };
 
             recorder.start();
 
-            // Stop this recorder after exactly RECORD_DURATION_MS
+            // Stop this recorder after exactly RECORD_CHUNK_MS to cycle cleanly
             setTimeout(() => {
                 if (recorder.state !== 'inactive') recorder.stop();
-            }, RECORD_DURATION_MS);
+            }, RECORD_CHUNK_MS);
         };
 
-        // Start the first chunk immediately
-        startChunk();
-
-        // Start a new chunk every RECORD_INTERVAL_MS, creating overlap
-        intervalRef.current = setInterval(startChunk, RECORD_INTERVAL_MS);
+        // Start the first non-overlapping cycle
+        recordCycle();
 
         setStatus('live');
     }, [transcribeChunk, fetchSuggestion]);
