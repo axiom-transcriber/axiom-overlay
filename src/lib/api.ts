@@ -1,4 +1,5 @@
 // All calls to the Axiom web API — auth token is always attached.
+import { supabase } from './supabase';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://axiomtranscriber.vercel.app';
 
@@ -11,6 +12,10 @@ export async function apiFetch(path: string, options: RequestInit = {}, token?: 
 
     const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
     if (!res.ok) {
+        if (res.status === 401) {
+            console.warn('[Overlay API] 401 Unauthorized — user deleted or session invalid. Signing out...');
+            await supabase.auth.signOut();
+        }
         const err = await res.json().catch(() => ({ error: res.statusText }));
         throw new Error(err.error || `HTTP ${res.status}`);
     }

@@ -18,10 +18,25 @@ export default function App() {
     const [selectedToken, setSelectedToken] = useState<string | null>(null);
 
     useEffect(() => {
-        supabase.auth.getSession().then(({ data }) => {
-            setSession(data.session);
+        const verifyUser = async () => {
+            const { data } = await supabase.auth.getSession();
+            if (data.session) {
+                const { data: userData, error: userError } = await supabase.auth.getUser();
+                if (userError || !userData?.user) {
+                    console.warn('[Overlay] User not found or deleted from DB. Signing out...');
+                    await supabase.auth.signOut();
+                    setSession(null);
+                } else {
+                    setSession(data.session);
+                }
+            } else {
+                setSession(null);
+            }
             setAuthLoading(false);
-        });
+        };
+
+        verifyUser();
+
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
             setSession(s);
             if (!s) {
@@ -29,6 +44,21 @@ export default function App() {
                 setView('select');
             }
         });
+
+        // Periodic check every 30s + window focus check for deleted user
+        const checkAlive = async () => {
+            const { data: s } = await supabase.auth.getSession();
+            if (s.session) {
+                const { data: u, error: err } = await supabase.auth.getUser();
+                if (err || !u?.user) {
+                    console.warn('[Overlay] Active user deleted. Signing out...');
+                    await supabase.auth.signOut();
+                }
+            }
+        };
+
+        const interval = setInterval(checkAlive, 30000);
+        window.addEventListener('focus', checkAlive);
 
         // Listen for OAuth deep link callbacks from Electron main process
         const cleanupOAuth = window.electronAPI?.onOAuthCallback(async ({ access_token, refresh_token }) => {
@@ -47,6 +77,8 @@ export default function App() {
 
         return () => {
             subscription.unsubscribe();
+            clearInterval(interval);
+            window.removeEventListener('focus', checkAlive);
             if (cleanupOAuth) cleanupOAuth();
         };
     }, []);
