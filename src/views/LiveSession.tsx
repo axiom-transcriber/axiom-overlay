@@ -205,18 +205,6 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         }
     }, []);
 
-    const isRecordingRef = useRef(false);
-    const recordersRef = useRef<Set<MediaRecorder>>(new Set());
-    const intervalRef = useRef<any>(null);
-
-    const cleanupAudio = useCallback(() => {
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        recordersRef.current.forEach(r => {
-            if (r.state !== 'inactive') r.stop();
-        });
-        recordersRef.current.clear();
-    }, []);
-
     // ── Start recording ───────────────────────────────────────────────────────
     const startRecording = useCallback(async (sid: string) => {
         let stream: MediaStream;
