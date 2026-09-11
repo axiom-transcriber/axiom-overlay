@@ -32,6 +32,9 @@ export default function Login() {
                 options: {
                     redirectTo: redirectUrl,
                     skipBrowserRedirect: true,
+                    queryParams: {
+                        prompt: 'select_account',
+                    },
                 }
             });
 
